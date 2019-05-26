@@ -3,6 +3,8 @@
 import requests
 import math,random
 from Crypto.Cipher import AES
+from urllib.request import urlretrieve
+from jindutiao import TqdmUpTo
 import base64
 import codecs
 import os
@@ -54,7 +56,7 @@ class decrypt_music(object):
     def rsa_encrypt(self, value, text, modulus):
         """
         RSA加密
-        :param value: 加密指数 
+        :param value: 加密指数
         :param text: 待加密密文
         :param modulus: 加密系数
         :return:
@@ -86,12 +88,12 @@ class SongDownloader(object):
         }
         self.client = pymongo.MongoClient(host='localhost', port=27017)
         self.db = self.client.wangyiyun
-        self.proxy_url = 'http://localhost:5555/random'
+        self.proxy_url = 'http://api.http.niumoyun.com/v1/http/ip/get?p_id=228&s_id=2&u=AmFVNwE5B2FSYwAuB0kHOA8gVWldZQsaBVJUUFNV&number=1&port=1&type=1&map=1&pro=0&city=0&pb=1&mr=2&cs=1'
 
     def get_songs(self, name):
         """
         获取歌曲搜索结果
-        :param name: 歌曲名称 
+        :param name: 歌曲名称
         :return: 搜索结果
         """
         d = '{"hlpretag":"<span class=\\"s-fc7\\">","hlposttag":"</span>","s":"%s","type":"1","offset":"0","total":"true","limit":"30","csrf_token":""}' % name
@@ -132,23 +134,24 @@ class SongDownloader(object):
         下载歌曲
         :param url: mp3地址
         :param filename: 下载文件名称
-        :return: 
+        :return:
         """
         # 获取绝对路径
         abspath = os.path.abspath('.')
         os.chdir(abspath)
         response = requests.get(url, headers=self.headers).content
         path = os.path.join(abspath, filename)
-        with open(filename + '.mp3', 'wb') as f:
-            f.write(response)
-            print('下载完毕,可以在%s   路径下查看' % path + '.mp3')
+        # 继承至tqdm父类的初始化参数
+        with TqdmUpTo(unit='B', unit_scale=True, unit_divisor=1024, miniters=1, desc=f'{filename}.mp4') as t:
+            urlretrieve(url, filename=f'{filename}.mp3', reporthook=t.update_to, data=None)
+        print('下载完毕,可以在%s   路径下查看' % path + '.mp3')
 
     def get_lyric(self, songname, id):
         """
         下载歌词
         :param songname: 歌曲名称（用作插入mongodb集合名称）
         :param id: 歌曲ID
-        :return: 
+        :return:
         """
         url = f'http://music.163.com/api/song/lyric?id={id}&lv=1&kv=1&tv=-1'
         response = requests.post(url, headers=self.headers)
@@ -169,14 +172,13 @@ class SongDownloader(object):
         下载歌曲评论
         :param songname: 歌曲名称（用作插入mongodb集合名称）
         :param id: 歌曲ID
-        :return: 
+        :return:
         """
         d = '{}'
         #d = '{rid:"", offset:"0", total:"true", limit:"20", csrf_token:""}'
         wyy = decrypt_music(d)
         data = wyy.get_data()
         url = f'https://music.163.com/weapi/v1/resource/comments/R_SO_4_{id}?csrf_token='
-        proxy = self.get_random_proxy()
         response = requests.post(url, data=data, headers=self.headers).json()
         # print(response)
         totalCount = response['total']
@@ -201,6 +203,7 @@ class SongDownloader(object):
             self.save_to_mongodb(songname, comment_info)
         print('热门评论下载成功')
         page = 0
+        proxy = self.get_random_proxy()
         while True:
             proxies = {
                 'http': f'http//{proxy}',
@@ -245,7 +248,7 @@ class SongDownloader(object):
         数据库存储
         :param collection: 集合名称
         :param item: 待插入数据
-        :return: 
+        :return:
         """
         try:
             self.db[collection].insert(dict(item))
@@ -256,22 +259,24 @@ class SongDownloader(object):
     def get_random_proxy(self):
         """
         使用随机代理下载评论
-        注：代理池为本地代理池，请自行更换代理
         :return: 代理IP
         """
         try:
-            response = requests.get(self.proxy_url)
-            if response.status_code == 200:
-                proxy = response.text
-                print(f'成功获取代理:{proxy}')
-                return proxy
+            res = requests.get(self.proxy_url)
+            result = res.json()
+            ip = result['data'][0]['ip']
+            port = result['data'][0]['port']
+            proxy = f'{ip}:{port}'
+            print(f'成功获取代理{proxy}')
+            return proxy
         except Exception as e:
-            print('获取代理失败：', e.args)
+            print('重试')
+            self.get_random_proxy()
 
     def run(self):
         """
         主函数运行
-        :return: 
+        :return:
         """
         while True:
             name = input('请输入你需要下载的歌曲：')
@@ -287,9 +292,9 @@ class SongDownloader(object):
                 url = self.get_mp3(songs[int(num)][1])
                 if not url:
                     print('歌曲需要收费，下载失败')
-                #else:
-                #    filename = songs[int(num)][0]
-                #    self.download_mp3(url, filename)
+                else:
+                    filename = songs[int(num)][0]
+                    self.download_mp3(url, filename)
                 flag = input('如需继续可以按任意键进行搜歌，否则按0结束程序')
                 if flag == '0':
                     break
